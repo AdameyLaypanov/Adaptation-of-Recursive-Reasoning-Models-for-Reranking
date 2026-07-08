@@ -1,0 +1,23 @@
+# TRM-арм: two-state recurrent cross-encoder (HRM-derived), главная модель статьи.
+# Эффективная глубина = H_cycles * (L_cycles + 1) * L_layers применений блока.
+
+experiment:
+  name: trm_reranker
+
+model:
+  arch: trm
+  params:
+    hidden_size: 512
+    num_heads: 8
+    L_layers: 2
+    H_layers: 2            # не используется (единая сеть), сохранено для совместимости конфигов
+    H_cycles: 2
+    L_cycles: 4
+    expansion: 4.0
+    pos_encodings: rope
+    halt_max_steps: 1      # >1 включает ACT-механику (E10, статья 2)
+    halt_exploration_prob: 0.0
+    no_ACT_continue: true
+    mlp_t: false
+    disable_input_injection: false   # true -> абляция E5
+    full_backprop: false             # true -> абляция one-step gradient (E0 follow-up)

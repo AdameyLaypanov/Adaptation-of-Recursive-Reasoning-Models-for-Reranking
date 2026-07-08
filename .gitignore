@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .DS_Store
 .ipynb_checkpoints/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+runs/
+artifacts/

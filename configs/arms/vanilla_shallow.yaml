@@ -1,0 +1,13 @@
+# Shallow param-matched baseline: столько же уникальных body-параметров, сколько у TRM.
+
+experiment:
+  name: vanilla_shallow
+
+model:
+  arch: vanilla
+  params:
+    hidden_size: 512
+    num_heads: 8
+    num_layers: 2
+    expansion: 4.0
+    pos_encodings: rope

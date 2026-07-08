@@ -1,0 +1,36 @@
+# Общий базовый конфиг: данные и рецепт обучения, единый для всех рук (К2).
+# Пути замените на свои локальные (или переопределите через --set).
+
+experiment:
+  name: experiment          # переопределяется в конфиге руки
+  seed: 13
+  output_root: ""           # каталог для runs/<experiment>_<run_id>/
+  run_id: null              # null -> timestamp / TRM_RUN_ID / TORCHELASTIC_RUN_ID
+
+data:
+  run_data_manifest_path: ""   # run_data_manifest.json из подготовки run-кэша
+  prep_manifest_path: null     # null -> берётся из run-манифеста
+  num_workers: 0
+
+training:
+  per_device_batch_size: 512   # одинаковый для всех рук (см. аудит E0!)
+  eval_batch_size: 512
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_ratio: 0.06
+  precision: bf16-mixed
+  epochs: 1
+  train_triples_sample: 1000000
+  run_epoch_fraction: null     # доля эпохи на сессию (сессионные окна как в ноутбуках)
+  run_train_steps: null
+  checkpoint_epoch_fraction: 0.005
+  checkpoint_every_n_steps: null
+  dev_eval_query_limit: 500
+  devices: 1
+  use_ddp: false
+  grad_accum_steps: 1
+  resume_from_checkpoint: false
+  resume_checkpoint_path: null
+  freeze_token_embeddings: false
+  freeze_segment_embeddings: false

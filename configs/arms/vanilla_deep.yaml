@@ -1,0 +1,14 @@
+# Deep FLOP/depth-matched baseline: независимые веса на эффективной глубине TRM.
+# TRM (H=2, L=4, L_layers=2): 2 цикла * (4+1) применений * 2 слоя = 20 слоёв.
+
+experiment:
+  name: vanilla_deep
+
+model:
+  arch: vanilla
+  params:
+    hidden_size: 512
+    num_heads: 8
+    num_layers: 20
+    expansion: 4.0
+    pos_encodings: rope

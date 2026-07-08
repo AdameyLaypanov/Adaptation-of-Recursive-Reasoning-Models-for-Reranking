@@ -1,0 +1,17 @@
+# E12a linear-probe конкурент: frozen BERT + LayerNorm + dropout + линейная голова.
+# (Легаси bert_encoder_only_ablation.)
+
+experiment:
+  name: bert_frozen_linear
+
+model:
+  arch: bert_scoring
+  params:
+    encoder_name: bert-base-uncased
+    encoder_local_path: null
+    freeze_encoder: true
+    dropout: 0.1
+
+training:
+  per_device_batch_size: 256
+  eval_batch_size: 256

@@ -1,0 +1,53 @@
+[project]
+name = "trm-reranker"
+version = "0.2.0"
+description = "Adaptation of recursive reasoning models (TRM/HRM-derived) for passage reranking"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "torch>=2.3",
+    "transformers>=4.44",
+    "tqdm>=4.66",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+eval = [
+    "scipy>=1.11",
+    "ir-measures>=0.3.3",
+    "ir-datasets>=0.5.5",
+]
+bench = [
+    "fvcore>=0.1.5",
+]
+notebooks = [
+    "jupyterlab>=4.0",
+    "ipykernel>=6.29",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trm_reranker"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
