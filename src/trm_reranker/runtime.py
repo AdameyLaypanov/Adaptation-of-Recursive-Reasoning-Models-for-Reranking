@@ -5,11 +5,10 @@ and build models identically.
 """
 
 import os
-import pickle
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
 
 from transformers import AutoTokenizer
 
@@ -22,22 +21,14 @@ from .data.manifests import (
     validate_run_data_manifest,
 )
 from .data.passage_store import build_passage_token_subset_loader
-from .models.registry import build_model, needs_bert_token_type_ids
-from .utils import is_empty_path, load_json, resolve_relative_or_absolute_path
+from .models.registry import build_model, needs_bert_token_type_ids, needs_model_dims
+from .utils import is_empty_path, load_json, load_pickle, resolve_relative_or_absolute_path
 
 
-def load_pickle(path: Path):
-    with Path(path).open("rb") as handle:
-        return pickle.load(handle)
-
-
-def resolve_run_id(explicit: Optional[str] = None) -> str:
-    return (
-        explicit
-        or os.environ.get("TRM_RUN_ID")
-        or os.environ.get("TORCHELASTIC_RUN_ID")
-        or time.strftime("%Y%m%d-%H%M%S")
-    )
+def resolve_run_id(explicit: str | None = None) -> str:
+    if explicit is not None:
+        return str(explicit)
+    return os.environ.get("TRM_RUN_ID") or os.environ.get("TORCHELASTIC_RUN_ID") or time.strftime("%Y%m%d-%H%M%S")
 
 
 @dataclass
@@ -47,9 +38,9 @@ class RunDataBundle:
     max_query_len: int
     max_doc_len: int
     encoder: PairEncoder
-    train_query_tokens: Dict
-    train_passage_tokens: Dict
-    dev_query_tokens: Dict
+    train_query_tokens: dict
+    train_passage_tokens: dict
+    dev_query_tokens: dict
     epoch_dev_candidates: object
     epoch_dev_qrels: object
     final_dev_candidates: object
@@ -57,7 +48,8 @@ class RunDataBundle:
     run_final_full_dev: bool
     epoch_dev_mode_label: str
     sampled_train_triples_path: Path
-    passage_token_getter: Callable[[int], List[int]]
+    passage_token_getter: Callable[[int], list[int]]
+    hard_negatives_path: Path | None = None
     run_manifest: dict = field(repr=False, default=None)
     prep_manifest: dict = field(repr=False, default=None)
     prep_manifest_path: Path = None
@@ -65,7 +57,21 @@ class RunDataBundle:
     artifact_dir: Path = None
 
 
-def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_train: bool = True) -> RunDataBundle:
+def load_run_data(cfg: ExperimentConfig, for_arch: str | None = None, load_train: bool = True) -> RunDataBundle:
+    """Assemble everything a run needs from the two-manifest data layout.
+
+    Resolution chain: ``data.run_data_manifest_path`` (run-level cache: sampled
+    triples, train token subsets, epoch-dev candidates) -> its
+    ``base_prep_manifest_path`` (dataset-level cache: tokenizer, full-collection
+    passage shard store, final-dev candidates) unless ``data.prep_manifest_path``
+    overrides it. Relative artifact paths resolve against the directory of the
+    manifest that declares them. Compatibility (seq lens, tokenizer, train
+    sample size, seed) is validated up front, so a mismatched cache fails here
+    and not mid-training.
+
+    ``for_arch`` switches the encoder to also emit BERT-native token_type_ids
+    for BERT variants; ``load_train=False`` (evaluation) skips the train pickles.
+    """
     if is_empty_path(cfg.data.run_data_manifest_path):
         raise ValueError("data.run_data_manifest_path is not configured")
     run_data_manifest_path = Path(cfg.data.run_data_manifest_path).expanduser().resolve()
@@ -75,7 +81,9 @@ def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_tr
 
     prep_manifest_path = cfg.data.prep_manifest_path
     if is_empty_path(prep_manifest_path):
-        prep_manifest_path = resolve_relative_or_absolute_path(run_manifest["base_prep_manifest_path"], run_data_cache_dir)
+        prep_manifest_path = resolve_relative_or_absolute_path(
+            run_manifest["base_prep_manifest_path"], run_data_cache_dir
+        )
     prep_manifest_path = Path(prep_manifest_path).expanduser().resolve()
     artifact_dir = prep_manifest_path.parent
     prep_manifest = load_json(prep_manifest_path)
@@ -86,7 +94,9 @@ def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_tr
     max_query_len = int(prep_manifest["max_query_len"])
     max_doc_len = int(prep_manifest["max_doc_len"])
     tokenizer_name = str(prep_manifest.get("tokenizer_name", run_manifest.get("tokenizer_name", "bert-base-uncased")))
-    tokenizer_local_path = resolve_relative_or_absolute_path(prep_manifest.get("tokenizer_local_path", "tokenizer"), artifact_dir)
+    tokenizer_local_path = resolve_relative_or_absolute_path(
+        prep_manifest.get("tokenizer_local_path", "tokenizer"), artifact_dir
+    )
     if tokenizer_local_path.exists():
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_local_path, use_fast=True, local_files_only=True)
     else:
@@ -115,14 +125,24 @@ def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_tr
     dev_query_tokens = load_pickle(artifact("dev_query_tokens_pkl", base=artifact_dir))
     epoch_dev_candidates = load_pickle(artifact("epoch_dev_candidates_pkl"))
     epoch_dev_qrels = load_pickle(artifact("epoch_dev_qrels_pkl"))
-    final_dev_candidates = load_pickle(artifact("final_dev_candidates_pkl", base=artifact_dir)) if run_final_full_dev else None
+    final_dev_candidates = (
+        load_pickle(artifact("final_dev_candidates_pkl", base=artifact_dir)) if run_final_full_dev else None
+    )
     final_dev_qrels = load_pickle(artifact("final_dev_qrels_pkl", base=artifact_dir)) if run_final_full_dev else None
 
     shards_dir = artifact("passage_token_shards_dir", base=artifact_dir, aliases=["passage_tokens_shards_dir"])
-    shards_index = artifact("passage_token_shards_index_json", base=artifact_dir, aliases=["passage_tokens_store_index_json"])
+    shards_index = artifact(
+        "passage_token_shards_index_json", base=artifact_dir, aliases=["passage_tokens_store_index_json"]
+    )
     _, get_passage_tokens, _ = build_passage_token_subset_loader(shards_index, artifact_dir, shards_dir_path=shards_dir)
 
     epoch_dev_mode_label = str(run_manifest.get("epoch_dev_mode_label") or run_manifest.get("dev_eval_mode"))
+
+    hard_negatives_path = None
+    if not is_empty_path(cfg.data.hard_negatives_path):
+        hard_negatives_path = Path(cfg.data.hard_negatives_path).expanduser().resolve()
+        if not hard_negatives_path.is_file():
+            raise FileNotFoundError(f"data.hard_negatives_path does not exist: {hard_negatives_path}")
 
     return RunDataBundle(
         tokenizer=tokenizer,
@@ -141,6 +161,7 @@ def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_tr
         epoch_dev_mode_label=epoch_dev_mode_label,
         sampled_train_triples_path=sampled_train_triples_path,
         passage_token_getter=get_passage_tokens,
+        hard_negatives_path=hard_negatives_path,
         run_manifest=run_manifest,
         prep_manifest=prep_manifest,
         prep_manifest_path=prep_manifest_path,
@@ -152,13 +173,12 @@ def load_run_data(cfg: ExperimentConfig, for_arch: Optional[str] = None, load_tr
 def build_model_from_config(cfg: ExperimentConfig, seq_len: int, vocab_size: int, forward_dtype: str):
     arch = cfg.model.arch
     params = dict(cfg.model.params)
-    if arch == "bert_scoring":
-        return build_model(arch, params)
-    params.setdefault("batch_size", cfg.training.per_device_batch_size)
-    params.setdefault("seq_len", seq_len)
-    params.setdefault("vocab_size", vocab_size)
-    params.setdefault("forward_dtype", forward_dtype)
-    params.setdefault("num_segment_types", 3)
+    if needs_model_dims(arch):
+        params.setdefault("batch_size", cfg.training.per_device_batch_size)
+        params.setdefault("seq_len", seq_len)
+        params.setdefault("vocab_size", vocab_size)
+        params.setdefault("forward_dtype", forward_dtype)
+        params.setdefault("num_segment_types", 3)
     return build_model(arch, params)
 
 

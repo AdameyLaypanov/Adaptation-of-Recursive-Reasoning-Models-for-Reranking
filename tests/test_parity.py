@@ -15,8 +15,7 @@ import os
 import pytest
 import torch
 
-from trm_reranker.models import TRMReranker
-from trm_reranker.training.optim import run_model_once
+from trm_reranker.models import TRMReranker, run_model_once
 
 CHECKPOINT_ENV = "TRM_LEGACY_CHECKPOINT"
 

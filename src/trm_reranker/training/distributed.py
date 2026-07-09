@@ -1,10 +1,12 @@
 """DDP helpers (ported from the legacy notebooks)."""
 
+import logging
 import os
-from contextlib import nullcontext
 
 import torch
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
 
 
 def is_dist_available_and_initialized() -> bool:
@@ -47,10 +49,6 @@ def reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
     return tensor
 
 
-def unwrap_model(model):
-    return model.module if hasattr(model, "module") else model
-
-
 def setup_distributed(use_ddp: bool) -> torch.device:
     world_size = get_world_size(use_ddp)
     if use_ddp and world_size > 1:
@@ -74,24 +72,15 @@ def resolve_precision(requested_precision: str, device_kind: str) -> str:
         if device_kind == "cuda" and torch.cuda.is_available() and torch.cuda.is_bf16_supported():
             return requested_precision
         if is_main_process():
-            print(f'Falling back from precision={requested_precision!r} to "32-true": bf16 is not available in this runtime.')
+            logger.warning(
+                'Falling back from precision=%r to "32-true": bf16 is not available in this runtime.',
+                requested_precision,
+            )
         return "32-true"
     if requested_precision == "16-mixed" and device_kind != "cuda":
         if is_main_process():
-            print(f'Falling back from precision={requested_precision!r} to "32-true": fp16 autocast needs CUDA.')
+            logger.warning(
+                'Falling back from precision=%r to "32-true": fp16 autocast needs CUDA.', requested_precision
+            )
         return "32-true"
     return requested_precision
-
-
-def get_autocast_context(device: torch.device, precision: str):
-    if device.type != "cuda":
-        return nullcontext()
-    if precision == "bf16-mixed":
-        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    if precision == "16-mixed":
-        return torch.autocast(device_type="cuda", dtype=torch.float16)
-    return nullcontext()
-
-
-def model_device(model: torch.nn.Module) -> torch.device:
-    return next(model.parameters()).device

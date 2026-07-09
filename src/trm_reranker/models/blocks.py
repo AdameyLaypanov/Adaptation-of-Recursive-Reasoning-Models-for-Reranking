@@ -1,21 +1,20 @@
 """Shared transformer building blocks.
 
-Single implementation used by every comparison arm (TRM, vanilla shallow/deep,
+Single implementation used by every comparison variant (TRM, vanilla shallow/deep,
 weight-tied deep, BERT+TRM head). Keeping one copy is what guarantees the K1
-alignment requirement of the WSDM plan: all arms share norm type/placement,
+alignment requirement of the WSDM plan: all variants share norm type/placement,
 activation, positional encoding, initialisation and bias settings by
 construction. Ported verbatim from the legacy notebooks.
 """
 
 import math
-from typing import Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.nn.functional import scaled_dot_product_attention
 
-CosSin = Tuple[torch.Tensor, torch.Tensor]
+CosSin = tuple[torch.Tensor, torch.Tensor]
 
 
 def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2.0, upper: float = 2.0):
@@ -65,7 +64,9 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
 class CastedLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool):
         super().__init__()
-        self.weight = nn.Parameter(trunc_normal_init_(torch.empty((out_features, in_features)), std=1.0 / (in_features**0.5)))
+        self.weight = nn.Parameter(
+            trunc_normal_init_(torch.empty((out_features, in_features)), std=1.0 / (in_features**0.5))
+        )
         self.bias = nn.Parameter(torch.zeros((out_features,))) if bias else None
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
@@ -77,7 +78,9 @@ class CastedEmbedding(nn.Module):
     def __init__(self, num_embeddings: int, embedding_dim: int, init_std: float, cast_to: torch.dtype):
         super().__init__()
         self.cast_to = cast_to
-        self.embedding_weight = nn.Parameter(trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=init_std))
+        self.embedding_weight = nn.Parameter(
+            trunc_normal_init_(torch.empty((num_embeddings, embedding_dim)), std=init_std)
+        )
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return F.embedding(inputs, self.embedding_weight.to(self.cast_to))
@@ -109,7 +112,9 @@ class Attention(nn.Module):
         self.qkv_proj = CastedLinear(hidden_size, (num_heads + 2 * num_key_value_heads) * head_dim, bias=False)
         self.o_proj = CastedLinear(self.output_size, hidden_size, bias=False)
 
-    def forward(self, cos_sin: CosSin, hidden_states: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self, cos_sin: CosSin, hidden_states: torch.Tensor, attention_mask: torch.Tensor = None
+    ) -> torch.Tensor:
         batch_size, seq_len, _ = hidden_states.shape
         qkv = self.qkv_proj(hidden_states)
         qkv = qkv.view(batch_size, seq_len, self.num_heads + 2 * self.num_key_value_heads, self.head_dim)
@@ -123,7 +128,9 @@ class Attention(nn.Module):
         key = key.permute(0, 2, 1, 3)
         value = value.permute(0, 2, 1, 3)
         attn_mask = attention_mask.to(query.dtype) if attention_mask is not None else None
-        attn_output = scaled_dot_product_attention(query=query, key=key, value=value, attn_mask=attn_mask, is_causal=self.causal)
+        attn_output = scaled_dot_product_attention(
+            query=query, key=key, value=value, attn_mask=attn_mask, is_causal=self.causal
+        )
         attn_output = attn_output.permute(0, 2, 1, 3).reshape(batch_size, seq_len, self.output_size)
         return self.o_proj(attn_output)
 
@@ -149,7 +156,7 @@ def rms_norm(hidden_states: torch.Tensor, variance_epsilon: float) -> torch.Tens
 
 
 class TransformerBlock(nn.Module):
-    """Post-norm RMSNorm + SwiGLU block; identical across all arms (K1)."""
+    """Post-norm RMSNorm + SwiGLU block; identical across all variants (K1)."""
 
     def __init__(self, hidden_size: int, num_heads: int, expansion: float, rms_norm_eps: float = 1e-5):
         super().__init__()
@@ -163,7 +170,9 @@ class TransformerBlock(nn.Module):
         self.mlp = SwiGLU(hidden_size=hidden_size, expansion=expansion)
         self.norm_eps = rms_norm_eps
 
-    def forward(self, hidden_states: torch.Tensor, cos_sin: CosSin = None, attention_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, cos_sin: CosSin = None, attention_mask: torch.Tensor = None
+    ) -> torch.Tensor:
         hidden_states = rms_norm(
             hidden_states + self.self_attn(cos_sin=cos_sin, hidden_states=hidden_states, attention_mask=attention_mask),
             variance_epsilon=self.norm_eps,

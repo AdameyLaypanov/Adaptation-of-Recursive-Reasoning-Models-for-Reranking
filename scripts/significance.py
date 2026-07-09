@@ -14,12 +14,16 @@ Example:
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from trm_reranker.evaluation.significance import compare_runs  # noqa: E402
+from trm_reranker.evaluation.significance import compare_runs
+from trm_reranker.utils import setup_logging
+
+logger = logging.getLogger("scripts.significance")
 
 
 def main():
@@ -41,8 +45,16 @@ def main():
     if args.out:
         payload = {"run_a": str(args.run_a), "run_b": str(args.run_b), "results": results}
         Path(args.out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"Saved: {args.out}")
+        logger.info("Saved: %s", args.out)
 
 
 if __name__ == "__main__":
-    main()
+    setup_logging()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user")
+        sys.exit(130)
+    except (ValueError, FileNotFoundError, KeyError) as error:
+        logger.error("%s", error)
+        sys.exit(2)

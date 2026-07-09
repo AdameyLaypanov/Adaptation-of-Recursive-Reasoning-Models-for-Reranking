@@ -9,7 +9,7 @@
 ## Структура репозитория
 
 ```text
-configs/                  # YAML-конфиги: base.yaml + configs/arms/<арм>.yaml
+configs/                  # YAML-конфиги: base.yaml + configs/variants/<вариант>.yaml
 src/trm_reranker/
   models/                 # blocks.py (общие блоки всех рук — гарантия выравнивания К1),
                           # trm.py, vanilla.py, tied.py (E3), bert.py (E1/E12a), registry.py
@@ -52,28 +52,44 @@ uv иначе резолвит окружение под Rosetta, где нет 
 
 ## Запуск
 
+Один раз пропишите локальные пути (файл в `.gitignore`, подробности —
+[docs/running.md](docs/running.md)):
+
+```bash
+cp configs/local.example.yaml configs/local.yaml   # указать output_root и путь к манифесту
+```
+
 Обучение одной руки:
 
 ```bash
 uv run python scripts/train.py \
-    --config configs/base.yaml configs/arms/trm.yaml \
-    --set data.run_data_manifest_path=/path/to/run_data_manifest.json \
-    --set experiment.output_root=/path/to/output
+    --config configs/base.yaml configs/variants/trm.yaml configs/local.yaml
 ```
 
 Смоук-проверка (20 шагов): добавьте `--set training.max_train_steps=20`.
+Посмотреть итоговый конфиг без запуска: `--print-config`.
 DDP: `uv run torchrun --nproc_per_node=2 scripts/train.py ... --set training.use_ddp=true`.
 Мультисид (E2): `--seed 13|17|42 --run-id seed13|...` — сид входит в имя run-директории.
+Периодичность чекпоинтов: `training.checkpoint_every_n_steps` либо
+`training.checkpoint_epoch_fraction` (дефолт 0.005 эпохи).
 Возобновление: `--resume-from /path/to/last_checkpoint.pt`.
 
 Любой параметр перекрывается через `--set section.key=value`; полный снапшот
-гиперпараметров пишется в `runs/<experiment>/training_config.json`.
+гиперпараметров пишется в `runs/<experiment>/training_config.json`. Опечатки в
+секциях/ключах конфига и в `model.params` отклоняются на старте. Все режимы
+запуска (сессионные окна, resume, оценка, значимость, footprint) — в
+[docs/running.md](docs/running.md).
+
+Лосс выбирается конфигом: `training.loss = pairwise_logistic | infonce` (E8);
+для InfoNCE негативы добываются `scripts/mine_hard_negatives.py` из ранжирований
+любого ретривера и подключаются через `data.hard_negatives_path`
+([docs/running.md, раздел 12](docs/running.md)).
 
 Оценка чекпоинта (пишет и per-query CSV для тестов значимости):
 
 ```bash
 uv run python scripts/evaluate.py \
-    --config configs/base.yaml configs/arms/trm.yaml \
+    --config configs/base.yaml configs/variants/trm.yaml \
     --set data.run_data_manifest_path=... \
     --checkpoint /path/to/best_mrr.pt --split final --out-dir eval_out/
 ```
@@ -92,8 +108,8 @@ uv run python scripts/significance.py \
 
 ```bash
 uv run python scripts/measure_footprint.py \
-    --arms configs/arms/trm.yaml configs/arms/vanilla_shallow.yaml \
-           configs/arms/vanilla_deep.yaml configs/arms/tied_deep.yaml \
+    --variants configs/variants/trm.yaml configs/variants/vanilla_shallow.yaml \
+           configs/variants/vanilla_deep.yaml configs/variants/tied_deep.yaml \
     --batch-size 1 --seq-len 256 --out footprint.json
 ```
 
@@ -112,20 +128,27 @@ uv run python scripts/measure_footprint.py \
 Метрики: MRR@10, hit@{1,3,5,10}, nDCG@10; в каждом eval также строка
 BM25/candidate-order baseline (вход реранкера).
 
-## Тесты
+## Тесты и качество кода
 
 ```bash
-uv run pytest                 # smoke: модели, кодирование пар, метрики, bootstrap, конфиги
+make test      # pytest: модели, конфиги, e2e-трейнер (чекпоинты+resume), майнинг
+make check     # ruff check + ruff format --check + pytest (то же гоняет CI)
+make fmt       # автоформат и автофиксы
+make hooks     # pre-commit хуки (ruff при каждом коммите)
 
 # parity против чекпоинта, обученного легаси-ноутбуком (обязателен перед заменой
 # старых чисел новыми прогонами):
-TRM_LEGACY_CHECKPOINT=/path/to/best_mrr.pt uv run pytest tests/test_parity.py -v
+TRM_LEGACY_CHECKPOINT=/path/to/best_mrr.pt make parity
 ```
+
+CI (GitHub Actions) гоняет `make check` на каждый push/PR — см. `.github/workflows/ci.yml`.
 
 ## Документация
 
 - [docs/architecture.md](docs/architecture.md) — устройство моделей и рук сравнения
-- [docs/experiments.md](docs/experiments.md) — маппинг экспериментов E0–E13 на конфиги/команды
+- [docs/running.md](docs/running.md) — все режимы запуска: smoke, DDP, resume, сессионные окна, eval
+- [docs/experiments.md](docs/experiments.md) — эксперименты E0–E13: зачем, команда, DoD
 - [docs/data.md](docs/data.md) — подготовка данных и форматы манифестов
 - [CHANGELOG.md](CHANGELOG.md) — версии
+- [CONTRIBUTING.md](CONTRIBUTING.md) — правила для контрибьюторов (паритет с легаси, стиль, конфиги)
 - [project_tracking/](project_tracking/) — статус плана и аудит E0 (рабочие документы)

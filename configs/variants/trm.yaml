@@ -1,4 +1,4 @@
-# TRM-арм: two-state recurrent cross-encoder (HRM-derived), главная модель статьи.
+# TRM-вариант: two-state recurrent cross-encoder (HRM-derived), главная модель статьи.
 # Эффективная глубина = H_cycles * (L_cycles + 1) * L_layers применений блока.
 
 experiment:

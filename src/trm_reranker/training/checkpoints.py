@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .distributed import unwrap_model
+from ..utils import unwrap_model
 
 
 @dataclass

@@ -8,11 +8,15 @@ Faithful port of `TinyRecursiveReasoningModel_ACTV1` from the legacy notebooks
 - ``full_backprop`` (E0 follow-up): backpropagate through all H-cycles instead
   of the HRM one-step gradient approximation (default keeps the original
   behaviour: the first ``H_cycles - 1`` cycles run under ``no_grad``).
+
+The recursion/ACT machinery shared with the BERT-encoder variant lives in
+``RecursiveInnerBase`` (two-state cycles, carry, heads) and
+``RecursiveACTReranker`` (halting wrapper); subclasses only define how input
+embeddings are produced.
 """
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List
 
 import torch
 from torch import nn
@@ -41,7 +45,7 @@ class TRMCarry:
     inner_carry: TRMInnerCarry
     steps: torch.Tensor
     halted: torch.Tensor
-    current_data: Dict[str, torch.Tensor]
+    current_data: dict[str, torch.Tensor]
 
 
 @dataclass
@@ -78,7 +82,9 @@ class MLPTBlock(nn.Module):
         self.mlp = SwiGLU(hidden_size=config.hidden_size, expansion=config.expansion)
         self.norm_eps = config.rms_norm_eps
 
-    def forward(self, hidden_states: torch.Tensor, cos_sin: CosSin = None, attention_mask: torch.Tensor = None) -> torch.Tensor:
+    def forward(
+        self, hidden_states: torch.Tensor, cos_sin: CosSin = None, attention_mask: torch.Tensor = None
+    ) -> torch.Tensor:
         del cos_sin, attention_mask
         hidden_states = hidden_states.transpose(1, 2)
         out = self.mlp_t(hidden_states)
@@ -101,7 +107,7 @@ def _build_block(config: TRMRerankerConfig) -> nn.Module:
 
 
 class TRMReasoningModule(nn.Module):
-    def __init__(self, layers: List[nn.Module]):
+    def __init__(self, layers: list[nn.Module]):
         super().__init__()
         self.layers = nn.ModuleList(layers)
 
@@ -112,49 +118,43 @@ class TRMReasoningModule(nn.Module):
         return hidden_states
 
 
-class TRMRerankerInner(nn.Module):
-    def __init__(self, config: TRMRerankerConfig) -> None:
-        super().__init__()
-        self.config = config
-        self.forward_dtype = getattr(torch, self.config.forward_dtype)
-        self.embed_scale = math.sqrt(self.config.hidden_size)
-        embed_init_std = 1.0 / self.embed_scale
+class RecursiveInnerBase(nn.Module):
+    """Two-state (z_H, z_L) recursion shared by the TRM and BERT-TRM variants.
 
-        self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.segment_emb = CastedEmbedding(self.config.num_segment_types, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.score_head = CastedLinear(self.config.hidden_size, 1, bias=True)
-        self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
+    Subclasses build their own embedding path in ``__init__`` (finishing with
+    ``_register_recursive_state()`` so buffer/RNG order stays stable) and
+    implement ``_compute_input_embeddings``.
+    """
 
-        if self.config.pos_encodings == "rope":
-            self.rotary_emb = RotaryEmbedding(
-                dim=self.config.hidden_size // self.config.num_heads,
-                max_position_embeddings=self.config.seq_len,
-                base=self.config.rope_theta,
-            )
-        elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+    config: TRMRerankerConfig
 
-        self.L_level = TRMReasoningModule(layers=[_build_block(self.config) for _ in range(self.config.L_layers)])
-
-        self.register_buffer("H_init", trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
-        self.register_buffer("L_init", trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
-
+    def _register_recursive_state(self) -> None:
+        self.register_buffer(
+            "H_init",
+            trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1),
+            persistent=True,
+        )
+        self.register_buffer(
+            "L_init",
+            trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1),
+            persistent=True,
+        )
         with torch.no_grad():
             self.q_head.weight.zero_()
             self.q_head.bias.fill_(-5)
 
-    def _input_embeddings(self, input_ids: torch.Tensor, token_type_ids: torch.Tensor) -> torch.Tensor:
-        embedding = self.embed_tokens(input_ids.to(torch.int64))
-        embedding = embedding + self.segment_emb(token_type_ids.to(torch.int64))
-        if self.config.pos_encodings == "learned":
-            embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight[: input_ids.shape[1]].to(self.forward_dtype))
-        return self.embed_scale * embedding
+    def _compute_input_embeddings(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        raise NotImplementedError
 
     def empty_carry(self, batch_size: int) -> TRMInnerCarry:
         device = self.H_init.device
         return TRMInnerCarry(
-            z_H=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
-            z_L=torch.empty(batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device),
+            z_H=torch.empty(
+                batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device
+            ),
+            z_L=torch.empty(
+                batch_size, self.config.seq_len, self.config.hidden_size, dtype=self.forward_dtype, device=device
+            ),
         )
 
     def reset_carry(self, reset_flag: torch.Tensor, carry: TRMInnerCarry) -> TRMInnerCarry:
@@ -169,12 +169,12 @@ class TRMRerankerInner(nn.Module):
             return z_H
         return z_H + input_embeddings
 
-    def forward(self, carry: TRMInnerCarry, batch: Dict[str, torch.Tensor]):
+    def forward(self, carry: TRMInnerCarry, batch: dict[str, torch.Tensor]):
         seq_info = {
             "cos_sin": self.rotary_emb() if hasattr(self, "rotary_emb") else None,
             "attention_mask": build_additive_attention_mask(batch["attention_mask"], self.forward_dtype),
         }
-        input_embeddings = self._input_embeddings(batch["input_ids"], batch["token_type_ids"])
+        input_embeddings = self._compute_input_embeddings(batch)
         z_H, z_L = carry.z_H, carry.z_L
 
         def run_cycles(z_H, z_L, num_cycles):
@@ -198,13 +198,66 @@ class TRMRerankerInner(nn.Module):
         return new_carry, scores, (q_logits[..., 0], q_logits[..., 1])
 
 
-class TRMReranker(nn.Module):
+class TRMRerankerInner(RecursiveInnerBase):
+    def __init__(self, config: TRMRerankerConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.forward_dtype = getattr(torch, self.config.forward_dtype)
+        self.embed_scale = math.sqrt(self.config.hidden_size)
+        embed_init_std = 1.0 / self.embed_scale
+
+        self.embed_tokens = CastedEmbedding(
+            self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+        )
+        self.segment_emb = CastedEmbedding(
+            self.config.num_segment_types, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+        )
+        self.score_head = CastedLinear(self.config.hidden_size, 1, bias=True)
+        self.q_head = CastedLinear(self.config.hidden_size, 2, bias=True)
+
+        if self.config.pos_encodings == "rope":
+            self.rotary_emb = RotaryEmbedding(
+                dim=self.config.hidden_size // self.config.num_heads,
+                max_position_embeddings=self.config.seq_len,
+                base=self.config.rope_theta,
+            )
+        elif self.config.pos_encodings == "learned":
+            self.embed_pos = CastedEmbedding(
+                self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+            )
+
+        self.L_level = TRMReasoningModule(layers=[_build_block(self.config) for _ in range(self.config.L_layers)])
+        self._register_recursive_state()
+
+    def _input_embeddings(self, input_ids: torch.Tensor, token_type_ids: torch.Tensor) -> torch.Tensor:
+        embedding = self.embed_tokens(input_ids.to(torch.int64))
+        embedding = embedding + self.segment_emb(token_type_ids.to(torch.int64))
+        if self.config.pos_encodings == "learned":
+            embedding = 0.707106781 * (
+                embedding + self.embed_pos.embedding_weight[: input_ids.shape[1]].to(self.forward_dtype)
+            )
+        return self.embed_scale * embedding
+
+    def _compute_input_embeddings(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        return self._input_embeddings(batch["input_ids"], batch["token_type_ids"])
+
+
+class RecursiveACTReranker(nn.Module):
+    """ACT halting wrapper shared by the recursive variants.
+
+    Subclasses set ``config_cls`` / ``inner_cls``; the carry bookkeeping,
+    halting decisions, and Q-learning targets are identical across variants.
+    """
+
+    config_cls = TRMRerankerConfig
+    inner_cls = TRMRerankerInner
+
     def __init__(self, config_dict: dict):
         super().__init__()
-        self.config = TRMRerankerConfig(**config_dict)
-        self.inner = TRMRerankerInner(self.config)
+        self.config = self.config_cls(**config_dict)
+        self.inner = self.inner_cls(self.config)
 
-    def initial_carry(self, batch: Dict[str, torch.Tensor]) -> TRMCarry:
+    def initial_carry(self, batch: dict[str, torch.Tensor]) -> TRMCarry:
         batch_size = batch["input_ids"].shape[0]
         return TRMCarry(
             inner_carry=self.inner.empty_carry(batch_size),
@@ -213,7 +266,7 @@ class TRMReranker(nn.Module):
             current_data={key: torch.empty_like(value) for key, value in batch.items()},
         )
 
-    def forward(self, carry: TRMCarry, batch: Dict[str, torch.Tensor]):
+    def forward(self, carry: TRMCarry, batch: dict[str, torch.Tensor]):
         new_inner_carry = self.inner.reset_carry(carry.halted, carry.inner_carry)
         new_steps = torch.where(carry.halted, torch.zeros_like(carry.steps), carry.steps)
         new_current_data = {
@@ -235,19 +288,26 @@ class TRMReranker(nn.Module):
                     halted = halted | (q_halt_logits > 0)
                 else:
                     halted = halted | (q_halt_logits > q_continue_logits)
-                min_halt_steps = (torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob) * torch.randint_like(
-                    new_steps, low=2, high=self.config.halt_max_steps + 1
-                )
+                min_halt_steps = (
+                    torch.rand_like(q_halt_logits) < self.config.halt_exploration_prob
+                ) * torch.randint_like(new_steps, low=2, high=self.config.halt_max_steps + 1)
                 halted = halted & (new_steps >= min_halt_steps)
                 if not self.config.no_ACT_continue:
                     _, _, (next_q_halt_logits, next_q_continue_logits) = self.inner(new_inner_carry, new_current_data)
                     outputs["target_q_continue"] = torch.sigmoid(
-                        torch.where(is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits))
+                        torch.where(
+                            is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits)
+                        )
                     )
         return TRMCarry(new_inner_carry, new_steps, halted, new_current_data), outputs
 
 
-def load_legacy_state_dict(model: "TRMReranker", state_dict: Dict[str, torch.Tensor]) -> None:
+class TRMReranker(RecursiveACTReranker):
+    config_cls = TRMRerankerConfig
+    inner_cls = TRMRerankerInner
+
+
+def load_legacy_state_dict(model: "TRMReranker", state_dict: dict[str, torch.Tensor]) -> None:
     """Load a checkpoint produced by the legacy notebooks.
 
     Legacy module paths are identical except the block class names, so keys map
@@ -257,11 +317,14 @@ def load_legacy_state_dict(model: "TRMReranker", state_dict: Dict[str, torch.Ten
 
 
 __all__ = [
+    "MLPTBlock",
+    "RecursiveACTReranker",
+    "RecursiveInnerBase",
     "TRMCarry",
     "TRMInnerCarry",
+    "TRMReasoningModule",
     "TRMReranker",
     "TRMRerankerConfig",
     "TRMRerankerInner",
-    "TRMReasoningModule",
     "load_legacy_state_dict",
 ]

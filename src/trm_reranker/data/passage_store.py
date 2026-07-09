@@ -1,9 +1,9 @@
 """Sharded flat-token passage store (read side)."""
 
 import json
+from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 
@@ -17,7 +17,7 @@ def load_passage_token_shard_index(index_path: Path) -> dict:
 def build_passage_token_subset_loader(
     index_path: Path,
     artifact_dir: Path,
-    shards_dir_path: Optional[Path] = None,
+    shards_dir_path: Path | None = None,
     shard_cache_size: int = 512,
     show_progress: bool = True,
 ):
@@ -43,7 +43,12 @@ def build_passage_token_subset_loader(
             path = resolve_relative_or_absolute_path(str(raw_path_value), artifact_dir)
             return path
 
-        filename = shard_entry.get("filename") or shard_entry.get("file_name") or shard_entry.get("basename") or shard_entry.get("name")
+        filename = (
+            shard_entry.get("filename")
+            or shard_entry.get("file_name")
+            or shard_entry.get("basename")
+            or shard_entry.get("name")
+        )
         if filename and resolved_shards_dir is not None:
             return resolved_shards_dir / str(filename)
 
@@ -69,7 +74,7 @@ def build_passage_token_subset_loader(
             "pid_lookup": pid_lookup,
         }
 
-    def get_passage_tokens(pid: int) -> List[int]:
+    def get_passage_tokens(pid: int) -> list[int]:
         shard = load_shard(int(pid) // shard_size)
         pid_idx = shard["pid_lookup"].get(int(pid))
         if pid_idx is None:
@@ -78,13 +83,13 @@ def build_passage_token_subset_loader(
         end = int(shard["offsets"][pid_idx + 1])
         return shard["token_ids"][start:end].tolist()
 
-    def load_passage_tokens_for_subset(pid_list: Iterable[int]) -> Dict[int, List[int]]:
+    def load_passage_tokens_for_subset(pid_list: Iterable[int]) -> dict[int, list[int]]:
         unique_pids = sorted({int(pid) for pid in pid_list})
-        pids_by_shard: Dict[int, List[int]] = {}
+        pids_by_shard: dict[int, list[int]] = {}
         for pid in unique_pids:
             pids_by_shard.setdefault(int(pid) // shard_size, []).append(int(pid))
 
-        subset: Dict[int, List[int]] = {}
+        subset: dict[int, list[int]] = {}
         with make_tqdm(total=len(unique_pids), desc="Load cached train passages", disable=not show_progress) as pbar:
             for shard_id in sorted(pids_by_shard):
                 shard = load_shard(shard_id)

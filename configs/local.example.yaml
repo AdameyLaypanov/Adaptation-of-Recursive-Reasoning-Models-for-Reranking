@@ -1,0 +1,11 @@
+# Шаблон локального конфига с путями конкретной машины.
+# Скопируйте в configs/local.yaml (файл в .gitignore) и передавайте ПОСЛЕДНИМ:
+#   uv run python scripts/train.py --config configs/base.yaml configs/variants/trm.yaml configs/local.yaml
+# Последний файл в --config побеждает при merge, поэтому пути отсюда
+# перекроют пустые значения base.yaml, не трогая общий рецепт.
+
+experiment:
+  output_root: /path/to/output          # здесь появится runs/<experiment>_seed<seed>_<run_id>/
+
+data:
+  run_data_manifest_path: /path/to/run_data_cache/run_data_manifest.json

@@ -47,7 +47,7 @@ score = score_head(z_H[:, 0])
 `vanilla_shallow` (2 слоя, param-matched к TRM) и `vanilla_deep`
 (20 слоёв, FLOP/depth-matched к TRM).
 
-### `tied` — weight-tied deep (ALBERT-арм, E3)
+### `tied` — weight-tied deep (ALBERT-вариант, E3)
 
 [models/tied.py](../src/trm_reranker/models/tied.py). `num_layers` уникальных
 блоков, применяемых `num_repeats` раз подряд — cross-layer tying без
@@ -78,7 +78,7 @@ BERT-руки дополнительно получают `bert_token_type_ids` 
 | vanilla_deep (20) | 68.16M | 34.93 |
 | tied_deep (2×10) | 6.82M | 34.93 |
 
-Подтверждает: deep-арм на 20 слоях FLOP-matched к TRM (H=2, L=4), tied-арм
+Подтверждает: deep-вариант на 20 слоях FLOP-matched к TRM (H=2, L=4), tied-вариант
 сочетает параметры TRM с компьютом deep. Воспроизвести:
 `scripts/measure_footprint.py`.
 
@@ -87,4 +87,4 @@ BERT-руки дополнительно получают `bert_token_type_ids` 
 Pairwise logistic loss `-logsigmoid(s_pos - s_neg)` на официальных триплетах
 MS MARCO; AdamW (wd 0.01), linear warmup 6% + linear decay, grad clip 1.0,
 bf16-mixed. Известные расхождения легаси-прогонов (batch 512 vs 256, единый LR
-без per-arm свипа) — см. `project_tracking/e0_alignment_audit_2026-07-08.md`.
+без per-variant свипа) — см. `project_tracking/e0_alignment_audit_2026-07-08.md`.

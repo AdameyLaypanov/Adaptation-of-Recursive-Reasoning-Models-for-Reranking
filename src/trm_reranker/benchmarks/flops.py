@@ -6,16 +6,14 @@ FLOP and misses some ops (e.g. SDPA), so the torch profiler number is the one
 to report.
 """
 
-from typing import Dict
-
 import torch
 
-from ..training.distributed import model_device
-from ..training.optim import run_model_once
+from ..models.inference import run_model_once
+from ..utils import model_device
 
 
 @torch.no_grad()
-def measure_forward_flops(model, sample_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+def measure_forward_flops(model, sample_batch: dict[str, torch.Tensor]) -> dict[str, float]:
     was_training = model.training
     model.eval()
     device = model_device(model)

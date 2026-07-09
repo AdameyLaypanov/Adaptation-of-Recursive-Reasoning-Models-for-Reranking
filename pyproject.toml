@@ -1,6 +1,6 @@
 [project]
 name = "trm-reranker"
-version = "0.2.0"
+version = "0.4.0"
 description = "Adaptation of recursive reasoning models (TRM/HRM-derived) for passage reranking"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
@@ -32,6 +32,7 @@ notebooks = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
+    "pre-commit>=3.7",
 ]
 
 [build-system]
@@ -46,8 +47,9 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
+select = ["E", "F", "I", "W", "B", "UP", "SIM", "RUF"]
+# E501 — длину строк держит ruff format; RUF001-003 — кириллица в строках/комментариях.
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

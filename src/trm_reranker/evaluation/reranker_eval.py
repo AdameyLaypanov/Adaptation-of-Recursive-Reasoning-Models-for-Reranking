@@ -7,24 +7,23 @@ so paired significance tests can be run afterwards.
 """
 
 import csv
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import torch
 
 from ..data.datasets import iter_grouped_candidates
 from ..data.encoding import PairEncoder, collate_encoded_pairs, move_batch_to_device
-from ..training.distributed import get_autocast_context, model_device
-from ..training.optim import run_model_once
-from ..utils import make_tqdm
+from ..models.inference import run_model_once
+from ..utils import get_autocast_context, make_tqdm, model_device
 from .metrics import RANKING_METRIC_NAMES, ranking_metrics_at_10
 
 
 def score_pid_batch(
     model,
     encoder: PairEncoder,
-    query_tokens: List[int],
+    query_tokens: list[int],
     pid_batch: Iterable[int],
     passage_token_getter,
     precision: str = "32-true",
@@ -32,9 +31,8 @@ def score_pid_batch(
     encoded_pairs = [encoder.encode_pair(query_tokens, list(passage_token_getter(int(pid)))) for pid in pid_batch]
     device = model_device(model)
     batch = move_batch_to_device(collate_encoded_pairs(encoded_pairs), device)
-    with torch.no_grad():
-        with get_autocast_context(device, precision):
-            scores, _ = run_model_once(model, batch)
+    with torch.no_grad(), get_autocast_context(device, precision):
+        scores, _ = run_model_once(model, batch)
     return scores.detach().float().cpu().tolist()
 
 
@@ -42,14 +40,14 @@ def evaluate_reranker(
     model,
     encoder: PairEncoder,
     candidates_artifact,
-    qrels: Dict[int, set],
-    query_token_map: Dict[int, List[int]],
+    qrels: dict[int, set],
+    query_token_map: dict[int, list[int]],
     run_path: Path,
     passage_token_getter,
     eval_batch_size: int = 512,
     precision: str = "32-true",
-    query_limit: Optional[int] = None,
-    per_query_path: Optional[Path] = None,
+    query_limit: int | None = None,
+    per_query_path: Path | None = None,
     model_tag: str = "model",
     show_progress: bool = True,
 ):
@@ -82,15 +80,17 @@ def evaluate_reranker(
                 continue
             if len(candidate_pids) != len(candidate_bm25_ranks):
                 raise ValueError(f"Candidate pid count and BM25 rank count differ for qid={qid}")
-            scores: List[float] = []
+            scores: list[float] = []
             for start in range(0, len(candidate_pids), eval_batch_size):
                 pid_batch = candidate_pids[start : start + eval_batch_size]
                 scores.extend(
-                    score_pid_batch(model, encoder, query_token_map[qid], pid_batch, passage_token_getter, precision=precision)
+                    score_pid_batch(
+                        model, encoder, query_token_map[qid], pid_batch, passage_token_getter, precision=precision
+                    )
                 )
-            reranked = sorted(zip(candidate_pids, scores), key=lambda item: item[1], reverse=True)
+            reranked = sorted(zip(candidate_pids, scores, strict=True), key=lambda item: item[1], reverse=True)
             reranked_pids = [pid for pid, _ in reranked]
-            bm25_ranked = sorted(zip(candidate_pids, candidate_bm25_ranks), key=lambda item: item[1])
+            bm25_ranked = sorted(zip(candidate_pids, candidate_bm25_ranks, strict=True), key=lambda item: item[1])
             bm25_ranked_pids = [pid for pid, _ in bm25_ranked]
             relevant_pids = qrels[qid]
             bm25_metrics = ranking_metrics_at_10(bm25_ranked_pids, relevant_pids)
@@ -115,7 +115,9 @@ def evaluate_reranker(
     if per_query_path is not None:
         per_query_path = Path(per_query_path)
         per_query_path.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames = ["qid", "num_candidates"] + [f"{prefix}_{name}" for prefix in ("bm25", "trm") for name in RANKING_METRIC_NAMES]
+        fieldnames = ["qid", "num_candidates"] + [
+            f"{prefix}_{name}" for prefix in ("bm25", "trm") for name in RANKING_METRIC_NAMES
+        ]
         with per_query_path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()

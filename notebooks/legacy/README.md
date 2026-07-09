@@ -8,10 +8,10 @@
 
 | Ноутбук | Замена |
 |---|---|
-| `main_scripts/pure_trm_reranker.ipynb` | `scripts/train.py` + `configs/arms/trm.yaml` |
-| `main_scripts/vanilla_transformer_rerank.ipynb` | `scripts/train.py` + `configs/arms/vanilla_{shallow,deep}.yaml` |
-| `main_scripts/bert_encoder.ipynb` | `scripts/train.py` + `configs/arms/bert_frozen_trm.yaml` |
-| `main_scripts/bert_encoder_only_ablation.ipynb` | `scripts/train.py` + `configs/arms/bert_frozen_linear.yaml` |
+| `main_scripts/pure_trm_reranker.ipynb` | `scripts/train.py` + `configs/variants/trm.yaml` |
+| `main_scripts/vanilla_transformer_rerank.ipynb` | `scripts/train.py` + `configs/variants/vanilla_{shallow,deep}.yaml` |
+| `main_scripts/bert_encoder.ipynb` | `scripts/train.py` + `configs/variants/bert_frozen_trm.yaml` |
+| `main_scripts/bert_encoder_only_ablation.ipynb` | `scripts/train.py` + `configs/variants/bert_frozen_linear.yaml` |
 | `main_scripts/bert_embeds.ipynb` | не портирован (вариант с frozen BERT-эмбеддингами; портировать при необходимости) |
 | `main_scripts/halt_exper.ipynb` | `scripts/train.py` (+ `measure_footprint.py` для latency) |
 | `main_scripts/monot5_base_full_eval.ipynb` | не портирован (offline-оценка monoT5 baseline) |

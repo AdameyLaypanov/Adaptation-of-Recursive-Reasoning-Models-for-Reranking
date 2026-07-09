@@ -1,14 +1,14 @@
 """Non-recursive transformer cross-encoder baselines.
 
-Same blocks and embedding scheme as the TRM arm (K1 alignment); the only
+Same blocks and embedding scheme as the TRM variant (K1 alignment); the only
 difference is the application scheme — a plain stack of independent layers.
-``num_layers`` selects the arm: shallow param-matched (e.g. 2) or deep
-FLOP/depth-matched (e.g. TRM effective depth).
+``num_layers`` selects the variant: shallow param-matched (e.g. 2) or deep
+FLOP/depth-matched (e.g. TRM effective depth). The weight-tied variant (E3)
+subclasses this and only repeats the same stack several times.
 """
 
 import math
 from dataclasses import dataclass
-from typing import Dict
 
 import torch
 from torch import nn
@@ -52,8 +52,12 @@ class VanillaRerankerInner(nn.Module):
         self.embed_scale = math.sqrt(self.config.hidden_size)
         embed_init_std = 1.0 / self.embed_scale
 
-        self.embed_tokens = CastedEmbedding(self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
-        self.segment_emb = CastedEmbedding(self.config.num_segment_types, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+        self.embed_tokens = CastedEmbedding(
+            self.config.vocab_size, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+        )
+        self.segment_emb = CastedEmbedding(
+            self.config.num_segment_types, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+        )
         self.score_head = CastedLinear(self.config.hidden_size, 1, bias=True)
         self.layers = nn.ModuleList(
             [
@@ -74,39 +78,52 @@ class VanillaRerankerInner(nn.Module):
                 base=self.config.rope_theta,
             )
         elif self.config.pos_encodings == "learned":
-            self.embed_pos = CastedEmbedding(self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype)
+            self.embed_pos = CastedEmbedding(
+                self.config.seq_len, self.config.hidden_size, init_std=embed_init_std, cast_to=self.forward_dtype
+            )
+
+    @property
+    def num_body_passes(self) -> int:
+        """How many times the layer stack is applied; the tied variant overrides this."""
+        return 1
 
     def _input_embeddings(self, input_ids: torch.Tensor, token_type_ids: torch.Tensor) -> torch.Tensor:
         embedding = self.embed_tokens(input_ids.to(torch.int64))
         embedding = embedding + self.segment_emb(token_type_ids.to(torch.int64))
         if self.config.pos_encodings == "learned":
-            embedding = 0.707106781 * (embedding + self.embed_pos.embedding_weight[: input_ids.shape[1]].to(self.forward_dtype))
+            embedding = 0.707106781 * (
+                embedding + self.embed_pos.embedding_weight[: input_ids.shape[1]].to(self.forward_dtype)
+            )
         return self.embed_scale * embedding
 
-    def forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         cos_sin = self.rotary_emb() if hasattr(self, "rotary_emb") else None
         attention_mask = build_additive_attention_mask(batch["attention_mask"], self.forward_dtype)
         hidden_states = self._input_embeddings(batch["input_ids"], batch["token_type_ids"])
-        for layer in self.layers:
-            hidden_states = layer(hidden_states=hidden_states, cos_sin=cos_sin, attention_mask=attention_mask)
+        for _ in range(self.num_body_passes):
+            for layer in self.layers:
+                hidden_states = layer(hidden_states=hidden_states, cos_sin=cos_sin, attention_mask=attention_mask)
         cls_state = hidden_states[:, 0]
         scores = self.score_head(cls_state).squeeze(-1)
         return {"scores": scores}
 
 
 class VanillaReranker(nn.Module):
+    config_cls = VanillaRerankerConfig
+    inner_cls = VanillaRerankerInner
+
     def __init__(self, config_dict: dict):
         super().__init__()
-        self.config = VanillaRerankerConfig(**config_dict)
-        self.inner = VanillaRerankerInner(self.config)
+        self.config = self.config_cls(**config_dict)
+        self.inner = self.inner_cls(self.config)
 
-    def initial_carry(self, batch: Dict[str, torch.Tensor]) -> VanillaRerankerCarry:
+    def initial_carry(self, batch: dict[str, torch.Tensor]) -> VanillaRerankerCarry:
         batch_size = batch["input_ids"].shape[0]
         return VanillaRerankerCarry(
             halted=torch.ones((batch_size,), dtype=torch.bool, device=batch["input_ids"].device),
         )
 
-    def forward(self, carry: VanillaRerankerCarry, batch: Dict[str, torch.Tensor]):
+    def forward(self, carry: VanillaRerankerCarry, batch: dict[str, torch.Tensor]):
         del carry
         outputs = self.inner(batch)
         batch_size = batch["input_ids"].shape[0]
@@ -116,4 +133,4 @@ class VanillaReranker(nn.Module):
         return new_carry, outputs
 
 
-__all__ = ["VanillaReranker", "VanillaRerankerConfig", "VanillaRerankerInner", "VanillaRerankerCarry"]
+__all__ = ["VanillaReranker", "VanillaRerankerCarry", "VanillaRerankerConfig", "VanillaRerankerInner"]

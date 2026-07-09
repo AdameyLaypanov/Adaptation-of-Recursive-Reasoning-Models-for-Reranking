@@ -6,13 +6,12 @@ never copied between rows.
 """
 
 import time
-from typing import Dict
 
 import numpy as np
 import torch
 
-from ..training.distributed import model_device
-from ..training.optim import run_model_once
+from ..models.inference import run_model_once
+from ..utils import model_device
 
 
 def synchronize_if_cuda(device: torch.device) -> None:
@@ -23,10 +22,10 @@ def synchronize_if_cuda(device: torch.device) -> None:
 @torch.no_grad()
 def measure_forward_latency(
     model,
-    sample_batch: Dict[str, torch.Tensor],
+    sample_batch: dict[str, torch.Tensor],
     warmup_steps: int = 10,
     measure_steps: int = 50,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     was_training = model.training
     model.eval()
     device = model_device(model)

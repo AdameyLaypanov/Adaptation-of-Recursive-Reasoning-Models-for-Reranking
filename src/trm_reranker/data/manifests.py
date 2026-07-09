@@ -1,38 +1,24 @@
 """Validation and resolution of prep/run-data manifests produced by data prep."""
 
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from ..utils import resolve_relative_or_absolute_path
 
 
-def get_manifest_mapping(manifest: dict, section_name: str) -> Dict[str, object]:
+def get_manifest_mapping(manifest: dict, section_name: str) -> dict[str, object]:
     value = manifest.get(section_name) or {}
     if not isinstance(value, dict):
         return {}
     return value
 
 
-def manifest_value_candidates(primary_key: str, aliases: Optional[List[str]] = None) -> List[str]:
-    keys = [primary_key]
-    if aliases:
-        keys.extend(aliases)
-    unique: List[str] = []
-    seen = set()
-    for key in keys:
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        unique.append(key)
-    return unique
-
-
-def get_manifest_mapping_value(mapping: Dict[str, object], keys: List[str]):
-    for key in keys:
-        value = mapping.get(key)
+def _first_present(mapping: dict[str, object], key: str, aliases: list[str] | None = None):
+    """First non-empty value among the primary key and its legacy aliases."""
+    for candidate in (key, *(aliases or [])):
+        value = mapping.get(candidate)
         if value:
-            return value, key
-    return None, None
+            return value
+    return None
 
 
 def validate_prep_manifest(manifest: dict) -> None:
@@ -54,9 +40,7 @@ def validate_prep_manifest(manifest: dict) -> None:
     }
     artifacts = get_manifest_mapping(manifest, "artifacts")
     missing_artifacts = [
-        key
-        for key, aliases in required_artifact_keys.items()
-        if get_manifest_mapping_value(artifacts, manifest_value_candidates(key, aliases))[0] is None
+        key for key, aliases in required_artifact_keys.items() if _first_present(artifacts, key, aliases) is None
     ]
     if missing_artifacts:
         raise ValueError(
@@ -116,7 +100,9 @@ def validate_run_data_manifest(run_manifest: dict) -> None:
         )
 
 
-def validate_run_data_compatibility(run_manifest: dict, prep_manifest: dict, train_triples_sample: int, seed: int) -> None:
+def validate_run_data_compatibility(
+    run_manifest: dict, prep_manifest: dict, train_triples_sample: int, seed: int
+) -> None:
     mismatches = {}
     prep_expected = {
         "tokenizer_name": str(prep_manifest.get("tokenizer_name", "")),
@@ -157,10 +143,10 @@ def resolve_run_manifest_artifact_path(
     run_manifest: dict,
     key: str,
     base_dir: Path,
-    aliases: Optional[List[str]] = None,
+    aliases: list[str] | None = None,
 ) -> Path:
     artifacts = get_manifest_mapping(run_manifest, "artifacts")
-    value, _ = get_manifest_mapping_value(artifacts, manifest_value_candidates(key, aliases))
+    value = _first_present(artifacts, key, aliases)
     if value is None:
         raise KeyError(
             f"Run-data manifest is missing required artifact key {key!r}. Available artifact keys: {sorted(artifacts)}"

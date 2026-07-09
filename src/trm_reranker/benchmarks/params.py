@@ -6,17 +6,15 @@ Reports separately, as the plan requires:
 - peak CUDA memory during a forward pass (when on GPU).
 """
 
-from typing import Dict
-
 import torch
 
-from ..training.distributed import model_device, unwrap_model
-from ..training.optim import run_model_once
+from ..models.inference import run_model_once
+from ..utils import model_device, unwrap_model
 
 EMBEDDING_NAME_MARKERS = ("embed_tokens", "segment_emb", "embed_pos", "embeddings")
 
 
-def count_parameters(model) -> Dict[str, int]:
+def count_parameters(model) -> dict[str, int]:
     raw_model = unwrap_model(model)
     total = 0
     embedding = 0
@@ -42,7 +40,7 @@ def checkpoint_size_fp16_mb(model) -> float:
 
 
 @torch.no_grad()
-def measure_peak_inference_memory(model, sample_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+def measure_peak_inference_memory(model, sample_batch: dict[str, torch.Tensor]) -> dict[str, float]:
     device = model_device(model)
     batch = {key: value.to(device) for key, value in sample_batch.items()}
     if device.type != "cuda":
@@ -56,8 +54,8 @@ def measure_peak_inference_memory(model, sample_batch: Dict[str, torch.Tensor]) 
     }
 
 
-def summarize_model_footprint(model, sample_batch=None) -> Dict[str, float]:
-    summary: Dict[str, float] = {}
+def summarize_model_footprint(model, sample_batch=None) -> dict[str, float]:
+    summary: dict[str, float] = {}
     summary.update(count_parameters(model))
     summary["checkpoint_fp16_mb"] = checkpoint_size_fp16_mb(model)
     if sample_batch is not None:

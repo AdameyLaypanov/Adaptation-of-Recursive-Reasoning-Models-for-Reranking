@@ -1,4 +1,4 @@
-"""Weight-tied deep transformer (ALBERT arm, experiment E3).
+"""Weight-tied deep transformer (ALBERT variant, experiment E3).
 
 Cross-layer parameter sharing without the TRM machinery: no two latent states,
 no input re-injection — a block stack of ``num_layers`` unique layers applied
@@ -6,16 +6,13 @@ no input re-injection — a block stack of ``num_layers`` unique layers applied
 contributes on top of plain tying.
 
 Effective depth = ``num_layers * num_repeats``; unique body params match a
-``num_layers``-deep vanilla model.
+``num_layers``-deep vanilla model. Everything except the repeat count is
+inherited from the vanilla variant.
 """
 
 from dataclasses import dataclass
-from typing import Dict
 
-import torch
-from torch import nn
-
-from .vanilla import VanillaRerankerCarry, VanillaRerankerConfig, VanillaRerankerInner
+from .vanilla import VanillaReranker, VanillaRerankerConfig, VanillaRerankerInner
 
 
 @dataclass
@@ -24,43 +21,14 @@ class TiedRerankerConfig(VanillaRerankerConfig):
 
 
 class TiedRerankerInner(VanillaRerankerInner):
-    def __init__(self, config: TiedRerankerConfig) -> None:
-        super().__init__(config)
-
-    def forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        cos_sin = self.rotary_emb() if hasattr(self, "rotary_emb") else None
-        from .blocks import build_additive_attention_mask
-
-        attention_mask = build_additive_attention_mask(batch["attention_mask"], self.forward_dtype)
-        hidden_states = self._input_embeddings(batch["input_ids"], batch["token_type_ids"])
-        for _ in range(self.config.num_repeats):
-            for layer in self.layers:
-                hidden_states = layer(hidden_states=hidden_states, cos_sin=cos_sin, attention_mask=attention_mask)
-        cls_state = hidden_states[:, 0]
-        scores = self.score_head(cls_state).squeeze(-1)
-        return {"scores": scores}
+    @property
+    def num_body_passes(self) -> int:
+        return int(self.config.num_repeats)
 
 
-class TiedReranker(nn.Module):
-    def __init__(self, config_dict: dict):
-        super().__init__()
-        self.config = TiedRerankerConfig(**config_dict)
-        self.inner = TiedRerankerInner(self.config)
-
-    def initial_carry(self, batch: Dict[str, torch.Tensor]) -> VanillaRerankerCarry:
-        batch_size = batch["input_ids"].shape[0]
-        return VanillaRerankerCarry(
-            halted=torch.ones((batch_size,), dtype=torch.bool, device=batch["input_ids"].device),
-        )
-
-    def forward(self, carry: VanillaRerankerCarry, batch: Dict[str, torch.Tensor]):
-        del carry
-        outputs = self.inner(batch)
-        batch_size = batch["input_ids"].shape[0]
-        new_carry = VanillaRerankerCarry(
-            halted=torch.ones((batch_size,), dtype=torch.bool, device=batch["input_ids"].device),
-        )
-        return new_carry, outputs
+class TiedReranker(VanillaReranker):
+    config_cls = TiedRerankerConfig
+    inner_cls = TiedRerankerInner
 
 
 __all__ = ["TiedReranker", "TiedRerankerConfig", "TiedRerankerInner"]

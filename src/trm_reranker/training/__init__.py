@@ -2,15 +2,12 @@ from .checkpoints import RunPaths, load_model_weights_for_eval, restore_training
 from .distributed import (
     cleanup_distributed,
     ddp_barrier,
-    get_autocast_context,
     get_local_rank,
     get_rank,
     get_world_size,
     is_main_process,
-    model_device,
     resolve_precision,
     setup_distributed,
-    unwrap_model,
 )
 from .optim import (
     build_linear_warmup_decay_lambda,
@@ -20,7 +17,6 @@ from .optim import (
     count_trainable_parameters,
     get_trainable_parameters,
     resolve_step_count,
-    run_model_once,
 )
 from .trainer import Trainer
 
@@ -34,19 +30,15 @@ __all__ = [
     "count_model_parameters",
     "count_trainable_parameters",
     "ddp_barrier",
-    "get_autocast_context",
     "get_local_rank",
     "get_rank",
     "get_trainable_parameters",
     "get_world_size",
     "is_main_process",
     "load_model_weights_for_eval",
-    "model_device",
     "resolve_precision",
     "resolve_step_count",
     "restore_training_state",
-    "run_model_once",
     "save_checkpoint",
     "setup_distributed",
-    "unwrap_model",
 ]

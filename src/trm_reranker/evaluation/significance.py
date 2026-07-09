@@ -8,7 +8,6 @@ the per-query CSV files written by ``evaluate_reranker(per_query_path=...)``.
 import csv
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -20,19 +19,19 @@ class PairedTestResult:
     mean_a: float
     mean_b: float
     mean_diff: float  # a - b
-    t_statistic: Optional[float]
-    t_pvalue: Optional[float]
+    t_statistic: float | None
+    t_pvalue: float | None
     bootstrap_pvalue: float
     diff_ci_low: float
     diff_ci_high: float
     n_bootstrap: int
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return asdict(self)
 
 
-def load_per_query_metrics(path: Path, column: str) -> Dict[int, float]:
-    values: Dict[int, float] = {}
+def load_per_query_metrics(path: Path, column: str) -> dict[int, float]:
+    values: dict[int, float] = {}
     with Path(path).open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         if column not in (reader.fieldnames or []):
@@ -42,7 +41,7 @@ def load_per_query_metrics(path: Path, column: str) -> Dict[int, float]:
     return values
 
 
-def align_by_query(values_a: Dict[int, float], values_b: Dict[int, float]) -> Tuple[np.ndarray, np.ndarray, List[int]]:
+def align_by_query(values_a: dict[int, float], values_b: dict[int, float]) -> tuple[np.ndarray, np.ndarray, list[int]]:
     common_qids = sorted(set(values_a) & set(values_b))
     if not common_qids:
         raise ValueError("No common query ids between the two runs")
@@ -51,7 +50,7 @@ def align_by_query(values_a: Dict[int, float], values_b: Dict[int, float]) -> Tu
     return a, b, common_qids
 
 
-def paired_t_test(a: np.ndarray, b: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+def paired_t_test(a: np.ndarray, b: np.ndarray) -> tuple[float | None, float | None]:
     try:
         from scipy import stats
     except ImportError:
@@ -66,7 +65,7 @@ def paired_bootstrap(
     n_bootstrap: int = 10_000,
     seed: int = 13,
     ci: float = 0.95,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Two-sided paired bootstrap p-value and CI for mean(a - b)."""
     rng = np.random.default_rng(seed)
     diff = a - b

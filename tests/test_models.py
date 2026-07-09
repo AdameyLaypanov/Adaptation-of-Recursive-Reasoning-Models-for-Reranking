@@ -1,7 +1,7 @@
 import torch
 
-from trm_reranker.models import TiedReranker, TRMReranker, VanillaReranker
-from trm_reranker.training.optim import count_model_parameters, run_model_once
+from trm_reranker.models import TiedReranker, TRMReranker, VanillaReranker, run_model_once
+from trm_reranker.training.optim import count_model_parameters
 
 BATCH, SEQ, VOCAB, HIDDEN = 2, 16, 128, 64
 
@@ -118,3 +118,35 @@ def test_trm_one_step_gradient_flows():
     scores.sum().backward()
     assert model.inner.score_head.weight.grad is not None
     assert model.inner.embed_tokens.embedding_weight.grad is not None
+
+
+def test_trm_state_dict_keys_stable():
+    """Checkpoint compatibility guard: legacy checkpoints must keep loading."""
+    model = TRMReranker(trm_config())
+    keys = set(model.state_dict().keys())
+    expected = {
+        "inner.H_init",
+        "inner.L_init",
+        "inner.embed_tokens.embedding_weight",
+        "inner.segment_emb.embedding_weight",
+        "inner.score_head.weight",
+        "inner.score_head.bias",
+        "inner.q_head.weight",
+        "inner.q_head.bias",
+        "inner.L_level.layers.0.self_attn.qkv_proj.weight",
+        "inner.L_level.layers.0.self_attn.o_proj.weight",
+        "inner.L_level.layers.0.mlp.gate_up_proj.weight",
+        "inner.L_level.layers.0.mlp.down_proj.weight",
+    }
+    assert keys == expected
+
+
+def test_unknown_model_param_rejected():
+    import pytest
+
+    from trm_reranker.models import build_model
+
+    with pytest.raises(ValueError, match=r"Unknown model\.params"):
+        build_model("trm", trm_config(bogus_flag=True))
+    with pytest.raises(ValueError, match=r"Unknown model\.params"):
+        build_model("bert_scoring", {"encoder_name": "bert-base-uncased", "freeze_encodr": True})
