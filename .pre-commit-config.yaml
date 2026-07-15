@@ -1,0 +1,15 @@
+# Установка: make hooks (или uv run pre-commit install).
+# Хуки локальные и используют ruff из dev-окружения uv — версия одна с CI.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check --fix
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]

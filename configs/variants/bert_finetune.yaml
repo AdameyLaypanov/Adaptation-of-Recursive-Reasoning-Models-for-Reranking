@@ -1,0 +1,19 @@
+# E1: полный файнтюн BERT-base cross-encoder (починка baseline 0.15).
+# Чек-лист E1: encoder разморожен, LR 2e-5 (не 2e-4!), официальные triples,
+# перед доверием результату — санити-чек eval-скрипта готовой моделью.
+
+experiment:
+  name: bert_finetune
+
+model:
+  arch: bert_scoring
+  params:
+    encoder_name: bert-base-uncased
+    encoder_local_path: null      # путь к локальному чекпоинту, если оффлайн
+    freeze_encoder: false
+    dropout: 0.1
+
+training:
+  learning_rate: 2.0e-5
+  per_device_batch_size: 64
+  eval_batch_size: 128

@@ -1,168 +1,154 @@
-# Neural Reranking Experiments
+# Adaptation of Recursive Reasoning Models for Reranking
 
-This repository contains Jupyter notebooks for preparing MS MARCO-style data, training neural reranker models, and comparing model latency against baseline/SOTA rerankers. The main workflow is: build tokenized caches, create a run-level subset for an experiment, train one of the architectures, and evaluate reranking metrics on `top1000.dev`.
+Исследование параметр/память-эффективности рекурсивных (TRM/HRM-derived) кросс-энкодеров
+для переранжирования пассажей MS MARCO. Центральный клейм: weight-shared рекурсивный
+кросс-энкодер достигает качества FLOP-matched глубокого трансформера при кратно меньшем
+числе обучаемых параметров. Планы экспериментов: `trm_reranker_wsdm2027_plan.md` (E0–E9),
+`trm_reranker_plan_addendum.md` (E10–E13); текущий статус — `project_tracking/`.
 
-## Repository Structure
-
-```text
-data_prep/
-  00_prepare_data_cache.ipynb        # Dataset-level caches: tokenizer, query tokens, passage shards, dev candidates/qrels
-  01_prepare_run_data_cache.ipynb    # Run-level caches: sampled triples, train token subsets, dev subset
-
-main_scripts/
-  pure_trm_reranker.ipynb            # TRM/Tiny Recursive Reasoning reranker
-  halt_exper.ipynb                   # TRM reranker with forward/final-dev latency measurements
-  vanilla_transformer_rerank.ipynb   # Vanilla Transformer ablation
-  bert_encoder.ipynb                 # Frozen BERT encoder + TRM reasoning head
-  bert_encoder_only_ablation.ipynb   # Frozen BERT encoder + scoring head without TRM
-  bert_embeds.ipynb                  # TRM with frozen BERT word embeddings + projection
-  monot5_base_full_eval.ipynb        # Offline full evaluation for monoT5-base baseline
-
-latency_notebooks/
-  all_architectures_latency.ipynb    # Synthetic batch=1 latency for project architectures
-  halt_exper_latency.ipynb           # TRM/HAlT-style forward-loop latency
-  sota_latency.ipynb                 # Latency for monoT5-base and bge-reranker-v2-m3
-```
-
-The repository does not include source datasets, local model checkpoints, or run outputs. The notebooks contain placeholder paths such as `<DATA_ROOT>`, `<ARTIFACT_DIR>`, `<OUTPUT_ROOT>`, and `<path/to/...>`; replace them with real local directories before running anything.
-
-## Input Data
-
-The pipeline expects MS MARCO passage ranking-style files:
-
-- `collection.tsv`
-- `qidpidtriples.train.full.2.tsv`
-- `top1000.dev`
-- `qrels.dev.small.tsv`
-- `queries.train.tsv`
-- `queries.dev.small.tsv`, optional: if this path is not configured, dev queries are derived from `top1000.dev`.
-
-In the main data-preparation notebook, `top1000.dev` is read as `qid<TAB>pid...`. `monot5_base_full_eval.ipynb` can auto-detect multiple formats: text rows, TREC run format, or an ID-only candidate file that is later joined with `queries` and `collection`.
-
-## Environment
-
-The local VS Code configuration points to `.venv/bin/python`; the current `.venv` uses Python 3.13.3. A minimal environment for the notebooks is:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install jupyterlab ipykernel numpy pandas tqdm torch transformers
-```
-
-Multi-GPU training requires a CUDA-compatible PyTorch build. The notebooks use `bf16-mixed` when CUDA and bfloat16 are available; otherwise they fall back to `float32`.
-
-## Data Preparation
-
-1. Open `data_prep/00_prepare_data_cache.ipynb` and configure:
-   - `DATA_ROOT`: directory with the dataset TSV files;
-   - `ARTIFACT_DIR`: directory for dataset-level artifacts;
-   - `DEV_QUERIES_PATH`, if a separate `queries.dev.small.tsv` file is available;
-   - `TOKENIZER_NAME`, `SEQ_LEN`, `MAX_QUERY_LEN`, and `MAX_DOC_LEN`, if you need values different from `bert-base-uncased`, `256`, `32`, and `221`.
-
-2. Run all cells. The notebook creates:
-   - `prep_manifest.json`;
-   - `cache_manifest_<tag>.json`;
-   - `artifact_index.json`;
-   - `train_queries.pkl`, `dev_queries.pkl`;
-   - tokenized query maps;
-   - a sharded passage token store in `.npz` files;
-   - `dev_candidates.pkl`, `dev_qrels.pkl`.
-
-3. Open `data_prep/01_prepare_run_data_cache.ipynb` and configure:
-   - `DATA_ROOT`;
-   - `PREP_MANIFEST_PATH`;
-   - `OUTPUT_ROOT`;
-   - `RUN_PROFILE`: `smoke`, `full`, or `full_all_dev`.
-
-4. Run the notebook. It creates `OUTPUT_ROOT/trm_reranker_mvp/run_data_cache/<cache_name>/run_data_manifest.json` plus related run-level files: sampled triples, train query tokens, train passage tokens, and epoch dev candidates/qrels.
-
-## Training
-
-Choose an experiment in `main_scripts` and replace the configuration paths in the first notebook cell:
-
-- `INPUT_ARTIFACT_DIR` or `INPUT_PREP_MANIFEST_PATH`;
-- `INPUT_RUN_DATA_MANIFEST_PATH`;
-- `INPUT_DATA_ROOT` and `INPUT_COLLECTION_PATH`;
-- `DEFAULT_OUTPUT_ROOT`;
-- for BERT variants: the path to a local `bert-base-uncased` checkpoint;
-- for the monoT5 baseline: `CFG["project_root"]`, `CFG["data_dir"]`, `CFG["model_dir"]`, and `CFG["out_dir"]`.
-
-Profiles:
-
-- `smoke`: quick sanity check with 100k triples, one device, and a limited number of train steps.
-- `full`: the main profile for the selected notebook.
-- `full_all_dev`: profile with full dev evaluation.
-
-Typical interactive launch:
-
-```bash
-source .venv/bin/activate
-jupyter lab
-```
-
-For reproducible CLI notebook execution:
-
-```bash
-jupyter nbconvert --execute --to notebook --inplace data_prep/00_prepare_data_cache.ipynb
-jupyter nbconvert --execute --to notebook --inplace data_prep/01_prepare_run_data_cache.ipynb
-jupyter nbconvert --execute --to notebook --inplace main_scripts/pure_trm_reranker.ipynb
-```
-
-Some training notebooks support `--profile`, `--output-root`, `--resume-from-checkpoint`, and `--run-id` when executed as Python scripts. For DDP/multi-GPU runs, export the notebook to `.py` and launch it with `torchrun`:
-
-```bash
-jupyter nbconvert --to script main_scripts/pure_trm_reranker.ipynb
-torchrun --nproc_per_node=2 main_scripts/pure_trm_reranker.py --profile full --output-root /path/to/output
-```
-
-## Outputs
-
-Training notebooks write results to:
+## Структура репозитория
 
 ```text
-<OUTPUT_ROOT>/trm_reranker_mvp/runs/<experiment_name>/
-  checkpoints/
-  logs/
-    train_metrics.csv
-    epoch_summaries.json
-  eval/
-  training_config.json
-  run_artifacts.json
-  fit_summary.json
+configs/                  # YAML-конфиги: base.yaml + configs/variants/<вариант>.yaml
+src/trm_reranker/
+  models/                 # blocks.py (общие блоки всех рук — гарантия выравнивания К1),
+                          # trm.py, vanilla.py, tied.py (E3), bert.py (E1/E12a), registry.py
+  data/                   # манифесты, шардированный passage store, датасеты, encode/collate
+  training/               # Trainer (DDP, bf16, resume, чекпоинты), distributed, optim
+  evaluation/             # метрики, реранкер-eval (+ per-query дамп), significance (E2)
+  benchmarks/             # latency (mean/p50/p95), FLOPs (профайлер), params/память
+  config.py, runtime.py   # конфиги и сборка рана
+scripts/                  # train.py, evaluate.py, measure_footprint.py, significance.py
+tests/                    # smoke-тесты + parity-тест против легаси-чекпоинтов
+notebooks/legacy/         # архив исходных ноутбуков (включая data_prep — см. docs/data.md)
+docs/                     # architecture.md, experiments.md, data.md
+project_tracking/         # рабочие документы проекта: статусы плана, аудиты (не документация кода)
 ```
 
-The main metrics are `mrr@10`, `hit@1`, `hit@3`, `hit@5`, `hit@10`, and `ndcg@10`. Evaluation files also include a BM25/candidate-order baseline so the reranker can be compared against the input ranking.
+## Установка (uv)
 
-`monot5_base_full_eval.ipynb` writes separate artifacts:
+```bash
+# базовое окружение (torch, transformers, ...)
+uv sync
 
-- `monot5_base_full_eval.run` in TREC run format;
-- `monot5_base_full_eval.metrics.json`;
-- `monot5_base_full_eval.config.json`;
-- `monot5_base_full_eval.progress.json`;
-- `monot5_base_full_eval.missing.json`;
-- `monot5_base_full_eval.preview.tsv`.
+# + значимость/внешние бенчмарки (scipy, ir-measures, ir-datasets)
+uv sync --extra eval
 
-## Latency Benchmarks
+# + fvcore для кросс-проверки FLOPs, + dev-инструменты
+uv sync --extra bench --dev
+```
 
-`latency_notebooks/all_architectures_latency.ipynb` compares the project architectures on synthetic input:
+Python зафиксирован в `.python-version` (arm64-сборка: на Apple Silicon с x86_64-Anaconda
+uv иначе резолвит окружение под Rosetta, где нет колёс torch).
 
-- `bert_encoder_trm`;
-- `bert_embeddings_trm`;
-- `bert_encoder_rerank_head`;
-- `vanilla_transformer`.
+## Данные
 
-For SOTA baselines, `latency_notebooks/sota_latency.ipynb` expects local models at:
+Пайплайн ожидает файлы MS MARCO passage ranking (`collection.tsv`,
+`qidpidtriples.train.full.2.tsv`, `top1000.dev`, `qrels.dev.small.tsv`,
+`queries.train.tsv`). Подготовка кэшей пока выполняется легаси-ноутбуками
+`notebooks/legacy/data_prep/00_*.ipynb` и `01_*.ipynb` — подробности и формат
+манифестов в [docs/data.md](docs/data.md). Результат подготовки — `prep_manifest.json`
+(датасет-уровень) и `run_data_manifest.json` (run-уровень); тренировке нужен только второй.
+
+## Запуск
+
+Один раз пропишите локальные пути (файл в `.gitignore`, подробности —
+[docs/running.md](docs/running.md)):
+
+```bash
+cp configs/local.example.yaml configs/local.yaml   # указать output_root и путь к манифесту
+```
+
+Обучение одной руки:
+
+```bash
+uv run python scripts/train.py \
+    --config configs/base.yaml configs/variants/trm.yaml configs/local.yaml
+```
+
+Смоук-проверка (20 шагов): добавьте `--set training.max_train_steps=20`.
+Посмотреть итоговый конфиг без запуска: `--print-config`.
+DDP: `uv run torchrun --nproc_per_node=2 scripts/train.py ... --set training.use_ddp=true`.
+Мультисид (E2): `--seed 13|17|42 --run-id seed13|...` — сид входит в имя run-директории.
+Периодичность чекпоинтов: `training.checkpoint_every_n_steps` либо
+`training.checkpoint_epoch_fraction` (дефолт 0.005 эпохи).
+Возобновление: `--resume-from /path/to/last_checkpoint.pt`.
+
+Любой параметр перекрывается через `--set section.key=value`; полный снапшот
+гиперпараметров пишется в `runs/<experiment>/training_config.json`. Опечатки в
+секциях/ключах конфига и в `model.params` отклоняются на старте. Все режимы
+запуска (сессионные окна, resume, оценка, значимость, footprint) — в
+[docs/running.md](docs/running.md).
+
+Лосс выбирается конфигом: `training.loss = pairwise_logistic | infonce` (E8);
+для InfoNCE негативы добываются `scripts/mine_hard_negatives.py` из ранжирований
+любого ретривера и подключаются через `data.hard_negatives_path`
+([docs/running.md, раздел 12](docs/running.md)).
+
+Оценка чекпоинта (пишет и per-query CSV для тестов значимости):
+
+```bash
+uv run python scripts/evaluate.py \
+    --config configs/base.yaml configs/variants/trm.yaml \
+    --set data.run_data_manifest_path=... \
+    --checkpoint /path/to/best_mrr.pt --split final --out-dir eval_out/
+```
+
+Значимость (E2, paired bootstrap + t-test):
+
+```bash
+uv run python scripts/significance.py \
+    --run-a eval_out/trm_final_per_query.csv \
+    --run-b eval_out/vanilla_deep_final_per_query.csv \
+    --out significance.json
+```
+
+Единая таблица params / GFLOPs / latency / память по всем рукам (E0/E2; каждая строка
+меряется реально, протокол: один девайс, фиксированный batch/seq, warmup, mean/p50/p95):
+
+```bash
+uv run python scripts/measure_footprint.py \
+    --variants configs/variants/trm.yaml configs/variants/vanilla_shallow.yaml \
+           configs/variants/vanilla_deep.yaml configs/variants/tied_deep.yaml \
+    --batch-size 1 --seq-len 256 --out footprint.json
+```
+
+## Выходные артефакты рана
 
 ```text
-../models/monot5-base-msmarco
-../models/bge-reranker-v2-m3
+<output_root>/runs/<experiment>_seed<seed>_<run_id>/
+  training_config.json        # полный конфиг (для таблицы гиперпараметров статьи)
+  run_artifacts.json          # пути к манифестам/данным
+  checkpoints/                # last / best_train_loss / best_mrr / best_dev_mrr10 / step_*
+  logs/train_metrics.csv      # пошаговый лог (loss, acc, margin, lr, grad_norm)
+  logs/dev_metrics_by_{step,epoch}.csv
+  eval/{steps,epochs,final}/  # TREC run, метрики JSON, *_per_query.csv
 ```
 
-Latency results are saved as JSON files in the notebook's current working directory.
+Метрики: MRR@10, hit@{1,3,5,10}, nDCG@10; в каждом eval также строка
+BM25/candidate-order baseline (вход реранкера).
 
-## Notes
+## Тесты и качество кода
 
-- Notebook outputs are cleared: the repository does not contain saved execution results.
-- `.venv` is present in the working directory, but it is a local environment rather than project logic.
-- `monot5_base_full_eval.ipynb` forces Hugging Face offline mode, so the model must be downloaded beforehand.
-- Large `full` runs require prepared caches and enough disk space for passage shards, checkpoints, and evaluation artifacts.
+```bash
+make test      # pytest: модели, конфиги, e2e-трейнер (чекпоинты+resume), майнинг
+make check     # ruff check + ruff format --check + pytest (то же гоняет CI)
+make fmt       # автоформат и автофиксы
+make hooks     # pre-commit хуки (ruff при каждом коммите)
+
+# parity против чекпоинта, обученного легаси-ноутбуком (обязателен перед заменой
+# старых чисел новыми прогонами):
+TRM_LEGACY_CHECKPOINT=/path/to/best_mrr.pt make parity
+```
+
+CI (GitHub Actions) гоняет `make check` на каждый push/PR — см. `.github/workflows/ci.yml`.
+
+## Документация
+
+- [docs/architecture.md](docs/architecture.md) — устройство моделей и рук сравнения
+- [docs/running.md](docs/running.md) — все режимы запуска: smoke, DDP, resume, сессионные окна, eval
+- [docs/experiments.md](docs/experiments.md) — эксперименты E0–E13: зачем, команда, DoD
+- [docs/data.md](docs/data.md) — подготовка данных и форматы манифестов
+- [CHANGELOG.md](CHANGELOG.md) — версии
+- [CONTRIBUTING.md](CONTRIBUTING.md) — правила для контрибьюторов (паритет с легаси, стиль, конфиги)
+- [project_tracking/](project_tracking/) — статус плана и аудит E0 (рабочие документы)

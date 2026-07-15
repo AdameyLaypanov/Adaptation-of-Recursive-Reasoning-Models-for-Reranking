@@ -1,0 +1,61 @@
+# Общий базовый конфиг: данные и рецепт обучения, единый для всех рук (К2).
+# Локальные пути НЕ хранить здесь: скопируйте configs/local.example.yaml в
+# configs/local.yaml (он в .gitignore) и передавайте его последним в --config.
+# Полный набор ключей и их смысл — src/trm_reranker/config.py (dataclass-секции);
+# любой ключ перекрывается через --set section.key=value.
+
+experiment:
+  name: experiment             # переопределяется в конфиге руки
+  seed: 13
+  output_root: ""              # каталог для runs/<experiment>_<run_id>/ (задаётся в local.yaml)
+  run_id: null                 # null -> TRM_RUN_ID / TORCHELASTIC_RUN_ID / timestamp; или --run-id
+
+data:
+  run_data_manifest_path: ""   # run_data_manifest.json из подготовки run-кэша (задаётся в local.yaml)
+  prep_manifest_path: null     # null -> берётся из run-манифеста
+  hard_negatives_path: null    # JSONL из scripts/mine_hard_negatives.py; обязателен для loss=infonce
+  num_workers: 0
+
+training:
+  # --- рецепт (одинаковый для всех рук, см. аудит E0) ---
+  per_device_batch_size: 512
+  eval_batch_size: 512
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  warmup_ratio: 0.06
+  precision: bf16-mixed        # деградирует до 32-true, если bf16 недоступен
+  epochs: 1
+  train_triples_sample: 1000000
+  max_train_steps: null        # жёсткий лимит шагов (smoke-прогоны)
+
+  # --- лосс (часть общего рецепта: менять здесь, не в конфиге варианта!) ---
+  loss: pairwise_logistic      # pairwise_logistic | infonce (E8)
+  num_negatives: 7             # негативов на запрос при infonce; шаг дорожает в (1+K)/2 раза
+  infonce_temperature: 1.0
+
+  # --- сессионные окна (обучение кусками между рестартами) ---
+  run_epoch_fraction: null     # доля эпохи на одну сессию (например 0.25)
+  run_train_steps: null        # то же, но в шагах; приоритетнее fraction
+
+  # --- чекпоинты и step-евалы (одна и та же периодичность) ---
+  checkpoint_epoch_fraction: 0.005   # каждые 0.5% эпохи; либо задать шаги явно ниже
+  checkpoint_every_n_steps: null     # приоритетнее fraction
+  keep_last_step_checkpoints: null   # N -> хранить только N последних step_*.pt (best/last/epoch не трогаются)
+  dev_eval_query_limit: 500          # быстрый dev-eval на N запросов при каждом чекпоинте
+
+  # --- возобновление ---
+  resume_from_checkpoint: false      # или --resume-from /path/to/last_checkpoint.pt
+  resume_checkpoint_path: null
+  allow_resume_lr_override: false    # true -> при resume взять LR из конфига, а не из чекпоинта
+
+  # --- распределёнка ---
+  devices: 1
+  use_ddp: false
+  grad_accum_steps: 1
+
+  # --- абляции / прочее ---
+  freeze_token_embeddings: false
+  freeze_segment_embeddings: false
+  run_epoch_dev_eval_on_partial: false  # полный epoch-eval даже после частичного куска эпохи
+  tqdm_postfix_every_n_steps: 200

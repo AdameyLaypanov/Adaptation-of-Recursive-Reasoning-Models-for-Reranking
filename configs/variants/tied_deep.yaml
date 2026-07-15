@@ -1,0 +1,15 @@
+# E3, ALBERT-вариант: weight-tied глубокий трансформер без TRM-машинерии.
+# Та же эффективная глубина, что у deep-варианта: 2 уникальных слоя * 10 повторов = 20.
+
+experiment:
+  name: tied_deep
+
+model:
+  arch: tied
+  params:
+    hidden_size: 512
+    num_heads: 8
+    num_layers: 2
+    num_repeats: 10
+    expansion: 4.0
+    pos_encodings: rope
