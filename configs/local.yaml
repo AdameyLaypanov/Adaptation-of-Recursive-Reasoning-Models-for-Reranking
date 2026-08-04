@@ -1,0 +1,32 @@
+# Пути для запуска проекта на кластере cHARISMa.
+# Этот файл уже исключён из Git через .gitignore.
+
+experiment:
+  output_root: /home/aburlova/trm/paper_outputs
+
+data:
+  run_data_manifest_path: /home/aburlova/trm/paper/data_artifacts/bert-base-uncased_seq256_q32_d221_sample1000000_seed13_devquick_count_700_seed13/run_data_manifest.json
+  prep_manifest_path: /home/aburlova/trm/paper/data_artifacts/final_artifacts/prep_manifest.json
+
+model:
+  params:
+    encoder_local_path: /home/aburlova/trm/paper/data_artifacts/models/bert-base-uncased
+
+training:
+  # Полный BERT fine-tuning не помещает per-device batch 512 на одной GPU.
+  # Эффективный batch: 64 * 2 GPU * 4 accumulation steps = 512.
+  per_device_batch_size: 64
+  devices: 2
+  use_ddp: true
+  grad_accum_steps: 4
+  # V100 не поддерживает bf16; используем нативный mixed fp16.
+  precision: 16-mixed
+  epochs: 5
+  # По умолчанию Trainer выполняет за один запуск только одну эпоху.
+  # Окно в 5 эпох позволяет одному sbatch завершить весь запланированный run.
+  run_epoch_fraction: 5
+
+  # При effective batch 512 это около одного периодического чекпоинта
+  # на эпоху; epoch-чекпоинты дополнительно сохраняются самим Trainer.
+  checkpoint_every_n_steps: 2000
+  keep_last_step_checkpoints: 3
